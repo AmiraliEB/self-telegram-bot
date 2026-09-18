@@ -82,11 +82,17 @@ async def challenge_listener(event: events.NewMessage.Event):
                 print(f"❌ Error sending comment: {e}")
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^ping$"))
-async def ping_pong_listener(event: events.NewMessage.Event):
-    m = await event.respond("!pong")
-    await asyncio.sleep(5)
-    await client.delete_messages(event.chat_id, [event.id, m.id])
+@client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^\s*ping\s*$"))
+async def ping_edit_listener(event: events.NewMessage.Event):
+    try:
+        await event.edit("🏓 Pong!")
+
+        await asyncio.sleep(5)
+
+        await event.delete()
+
+    except Exception as e:
+        print(f"❌ error in ping pong method: {e}")
 
 
 with client:
