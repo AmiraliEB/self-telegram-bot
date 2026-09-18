@@ -89,7 +89,7 @@ async def ping_edit_listener(event: events.NewMessage.Event):
 
         await event.edit("🏓 Pong!")
         latency_ms = (time.perf_counter() - start_time) * 1000
-        await event.edit(f"🏓 **Pong!**\n⏱ پینگ: `{latency_ms:.1f}` میلی‌ثانیه")
+        await event.edit(f"🏓 **Pong!**\n⏱ Ping: `{latency_ms:.1f}` ms")
         await asyncio.sleep(5)
 
         await event.delete()
