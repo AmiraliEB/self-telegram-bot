@@ -82,6 +82,13 @@ async def challenge_listener(event: events.NewMessage.Event):
                 print(f"❌ Error sending comment: {e}")
 
 
+@client.on(events.NewMessage(outgoing=True, pattern="ping"))
+async def ping_pong_listener(event: events.NewMessage.Event):
+    m = await event.respond("!pong")
+    await asyncio.sleep(5)
+    await client.delete_messages(event.chat_id, [event.id, m.id])
+
+
 with client:
     print("⚡ Bot is active and listening for challenges...")
     client.run_until_disconnected()
