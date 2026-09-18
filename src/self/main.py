@@ -82,7 +82,7 @@ async def challenge_listener(event: events.NewMessage.Event):
                 print(f"❌ Error sending comment: {e}")
 
 
-@client.on(events.NewMessage(outgoing=True, pattern="ping"))
+@client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^ping$"))
 async def ping_pong_listener(event: events.NewMessage.Event):
     m = await event.respond("!pong")
     await asyncio.sleep(5)
