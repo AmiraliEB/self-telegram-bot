@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 import re
 import time
@@ -96,6 +97,50 @@ async def ping_edit_listener(event: events.NewMessage.Event):
 
     except Exception as e:
         print(f"❌ error in ping pong method: {e}")
+
+
+def extract_ttl(msg):
+    media = getattr(msg, "media", None)
+    if not media:
+        return None
+
+    ttl = getattr(media, "ttl_seconds", None)
+    if not ttl and getattr(media, "document", None):
+        for attr in getattr(media.document, "attributes", []):
+            attr_ttl = getattr(attr, "ttl_seconds", None)
+            if attr_ttl:
+                return attr_ttl
+    return ttl
+
+
+@client.on(events.NewMessage(incoming=True, func=lambda event: event.is_private and (event.photo or event.video)))
+async def private_message_handler(event: events.NewMessage.Event):
+    msg = event.message
+    ttl = extract_ttl(msg)
+
+    if not ttl or ttl <= 0:
+        return
+
+    if ttl >= 2147483647 or ttl == 1:
+        media_label = "View Once"
+    else:
+        media_label = f"Timer ({ttl}s)"
+
+    if msg.voice:
+        filename = "voice.ogg"
+    elif msg.video or msg.video_note:
+        filename = "video.mp4"
+    else:
+        filename = "photo.jpg"
+
+    buffer = io.BytesIO()
+    await msg.download_media(file=buffer)
+    buffer.seek(0)
+    buffer.name = filename
+
+    caption = f"save media {media_label}\n" f"sender: {msg.sender_id}"
+
+    await client.send_file("me", buffer, caption=caption, silent=True)
 
 
 with client:
