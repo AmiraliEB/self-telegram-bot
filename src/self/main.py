@@ -85,8 +85,11 @@ async def challenge_listener(event: events.NewMessage.Event):
 @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^\s*ping\s*$"))
 async def ping_edit_listener(event: events.NewMessage.Event):
     try:
-        await event.edit("🏓 Pong!")
+        start_time = time.perf_counter()
 
+        await event.edit("🏓 Pong!")
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        await event.edit(f"🏓 **Pong!**\n⏱ پینگ: `{latency_ms:.1f}` میلی‌ثانیه")
         await asyncio.sleep(5)
 
         await event.delete()
