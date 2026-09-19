@@ -120,7 +120,7 @@ async def private_message_handler(event: events.NewMessage.Event):
 
     if not ttl or ttl <= 0:
         return
-
+    t1 = time.perf_counter()
     if ttl >= 2147483647 or ttl == 1:
         media_label = "View Once"
     else:
@@ -132,15 +132,90 @@ async def private_message_handler(event: events.NewMessage.Event):
         filename = "video.mp4"
     else:
         filename = "photo.jpg"
-
+    t2 = time.perf_counter()
     buffer = io.BytesIO()
     await msg.download_media(file=buffer)
     buffer.seek(0)
     buffer.name = filename
-
+    t3 = time.perf_counter()
     caption = f"save media {media_label}\n" f"sender: {msg.sender_id}"
 
-    await client.send_file("me", buffer, caption=caption, silent=True)
+    destructive_media = await client.send_file("me", buffer, caption=caption, silent=True)
+    t4 = time.perf_counter()
+
+    process_message = (t2 - t1) * 1000
+    write_on_memory = (t3 - t2) * 1000
+    sending_time = (t4 - t3) * 1000
+    total_time = (t4 - t1) * 1000
+    log_message = await destructive_media.reply(
+        f"process message type:{process_message:.2f}ms\ntime to write on memory: { write_on_memory:.2f}ms\ntime to send message: {sending_time:.2f}ms\ntotal time spending: {total_time:.1f}ms"
+    )
+    await asyncio.sleep(30)
+    await log_message.delete()
+
+
+PATTERN = r"^private_channel\s+https?://t\.me/(?:c/)?([^/]+)/(\d+)"
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=PATTERN))
+async def private_channel_handler(event: events.NewMessage.Event):
+    target = event.pattern_match.group(1)
+    post_id = int(event.pattern_match.group(2))
+    msg = None
+    try:
+
+        if target.isdigit():
+            chat_id = int(f"-100{target}")
+        else:
+            # Public channel username
+            chat_id = target
+
+        msg = await event.client.get_messages(chat_id, ids=post_id)
+
+        if not msg:
+            await event.reply("No message found with this ID.")
+            return
+
+    except Exception as e:
+        await event.reply(f"Error processing link: {e}")
+        return
+
+    if not getattr(msg, "media", None):
+        await event.reply("This message does not contain any media.")
+        return
+
+    if msg.voice:
+        filename = "voice.ogg"
+    elif msg.video or msg.video_note or msg.gif:
+        filename = "video.mp4"
+    elif msg.photo:
+        filename = "photo.jpg"
+    elif msg.audio:
+        filename = getattr(msg.file, "name", "audio.mp3") or "audio.mp3"
+    else:
+        filename = getattr(msg.file, "name", "file.bin") or "file.bin"
+
+    status_msg = await event.reply("Downloading media...")
+    try:
+        attributes = getattr(getattr(msg, "document", None), "attributes", None)
+        thumb = None
+        if getattr(getattr(msg, "document", None), "thumbs", None):
+            try:
+                thumb = await msg.download_media(thumb=-1, file=bytes)
+            except Exception:
+                thumb = None
+        buffer = io.BytesIO()
+        await msg.download_media(file=buffer)
+        buffer.seek(0)
+        buffer.name = filename
+        caption_parts = [f"Sender: {msg.sender_id}"]
+        if msg.text:
+            caption_parts.append(f"Caption:\n{msg.text}")
+        caption = "\n\n".join(caption_parts)
+        await event.reply(file=buffer, message=caption, attributes=attributes, thumb=thumb, silent=True)
+        await status_msg.delete()
+    except Exception as e:
+        await status_msg.edit(f"Failed to process media: {e}")
 
 
 with client:
