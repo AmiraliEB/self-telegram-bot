@@ -20,11 +20,6 @@ client = TelegramClient(
     "amir",
     API_ID,
     API_HASH,
-    device_model="PC 64bit",
-    system_version="Windows 10",
-    app_version="4.16.8 x64",
-    lang_code="en",
-    system_lang_code="en-US",
 )
 
 CHALLENGE_PATTERN = re.compile(
