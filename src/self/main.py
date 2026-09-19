@@ -1,11 +1,13 @@
 import asyncio
 import io
 import logging
+import random
 import re
 import time
 
 import aiohttp
 from telethon import TelegramClient, events
+from telethon.errors import ChatForwardsRestrictedError
 
 from self.config import ADMIN_ID, API_HASH, API_ID, DISCUSSION_GROUP_ID, NTFY_TOPIC_ID
 
@@ -14,11 +16,21 @@ logging.basicConfig(
     level=logging.WARNING,
 )
 
-client = TelegramClient("amir", API_ID, API_HASH)
+client = TelegramClient(
+    "amir",
+    API_ID,
+    API_HASH,
+    device_model="PC 64bit",
+    system_version="Windows 10",
+    app_version="4.16.8 x64",
+    lang_code="en",
+    system_lang_code="en-US",
+)
 
 CHALLENGE_PATTERN = re.compile(
     r"(?s)این\s*(?:پایین|زیر).*?بگه\s*[:：]?\s*[\r\n]*\s*[*_`~\"'«]?(?P<target>[^\r\n*_`~\"'»]+?)[*_`~\"'»]?(?:\s+|[\r\n]+[^\w\s]*\s*)برنده.*?میشه"
 )
+MAX_ALLOWED_SIZE = 30 * 1024 * 1024
 
 
 async def send_urgent_alarm(message: str) -> None:
@@ -57,6 +69,7 @@ async def challenge_listener(event: events.NewMessage.Event):
             print(f"🎯 Target phrase found: [{target_phrase}]")
 
             try:
+                await asyncio.sleep(random.uniform(2.2, 3.6))
                 await event.reply(target_phrase)
                 t_sent = time.perf_counter()
 
@@ -113,7 +126,52 @@ def extract_ttl(msg):
     return ttl
 
 
-@client.on(events.NewMessage(incoming=True, func=lambda event: event.is_private and (event.photo or event.video)))
+def filename_output(msg):
+    if msg.voice:
+        return "voice.ogg"
+    elif msg.video or msg.video_note or msg.gif:
+        return "video.mp4"
+    elif msg.photo:
+        return "photo.jpg"
+    elif msg.audio:
+        return getattr(msg.file, "name", "audio.mp3") or "audio.mp3"
+    else:
+        return getattr(msg.file, "name", "file.bin") or "file.bin"
+
+
+def progress_tracker(status_msg, action="Downloading"):
+    last_edit_time = 0
+
+    async def callback(current, total):
+        nonlocal last_edit_time
+        now = time.time()
+
+        if (now - last_edit_time >= 2.5) or (current == total):
+            last_edit_time = now
+            percent = (current / total) * 100 if total > 0 else 0
+            current_mb = current / (1024 * 1024)
+            total_mb = total / (1024 * 1024)
+
+            filled = int(percent // 10)
+            bar = "█" * filled + "░" * (10 - filled)
+
+            icon = "📤" if "up" in action.lower() else "📥"
+
+            text = (
+                f"{icon} **{action}...**\n\n"
+                f"[{bar}] `{percent:.1f}%`\n"
+                f"📊 Size: `{current_mb:.1f} MB` / `{total_mb:.1f} MB`"
+            )
+
+            try:
+                await status_msg.edit(text)
+            except Exception:
+                pass
+
+    return callback
+
+
+@client.on(events.NewMessage(incoming=True, func=lambda event: event.is_private and (event.media is not None)))
 async def private_message_handler(event: events.NewMessage.Event):
     msg = event.message
     ttl = extract_ttl(msg)
@@ -125,22 +183,30 @@ async def private_message_handler(event: events.NewMessage.Event):
         media_label = "View Once"
     else:
         media_label = f"Timer ({ttl}s)"
+    filename = filename_output(msg)
 
-    if msg.voice:
-        filename = "voice.ogg"
-    elif msg.video or msg.video_note:
-        filename = "video.mp4"
-    else:
-        filename = "photo.jpg"
     t2 = time.perf_counter()
+    msg_tracker = await client.send_message("me", message="downloading time limited media ...")
+    tracker = progress_tracker(status_msg=msg_tracker)
+
     buffer = io.BytesIO()
-    await msg.download_media(file=buffer)
+    await msg.download_media(file=buffer, progress_callback=tracker)
     buffer.seek(0)
     buffer.name = filename
-    t3 = time.perf_counter()
-    caption = f"save media {media_label}\n" f"sender: {msg.sender_id}"
 
-    destructive_media = await client.send_file("me", buffer, caption=caption, silent=True)
+    t3 = time.perf_counter()
+    sender_info = str(msg.sender_id)
+    try:
+        sender = await event.get_sender()
+        if sender and getattr(sender, "username", None):
+            sender_info = f"@{sender.username}"
+    except Exception:
+        pass
+    tracker = progress_tracker(status_msg=msg_tracker, action="Uploading")
+    caption = f"sender: {sender_info}"
+    destructive_media = await client.send_file("me", buffer, caption=caption, silent=True, progress_callback=tracker)
+    await msg_tracker.delete()
+
     t4 = time.perf_counter()
 
     process_message = (t2 - t1) * 1000
@@ -154,7 +220,7 @@ async def private_message_handler(event: events.NewMessage.Event):
     await log_message.delete()
 
 
-PATTERN = r"^private_channel\s+https?://t\.me/(?:c/)?([^/]+)/(\d+)"
+PATTERN = r"^private_channel\s+https?://t\.me/(?:c/)?([^/]+)(?:/\d+)?/(\d+)"
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=PATTERN))
@@ -184,19 +250,29 @@ async def private_channel_handler(event: events.NewMessage.Event):
         await event.reply("This message does not contain any media.")
         return
 
-    if msg.voice:
-        filename = "voice.ogg"
-    elif msg.video or msg.video_note or msg.gif:
-        filename = "video.mp4"
-    elif msg.photo:
-        filename = "photo.jpg"
-    elif msg.audio:
-        filename = getattr(msg.file, "name", "audio.mp3") or "audio.mp3"
-    else:
-        filename = getattr(msg.file, "name", "file.bin") or "file.bin"
+    filename = filename_output(msg)
 
     status_msg = await event.reply("Downloading media...")
+    is_restricted = getattr(msg, "noforwards", False)
+    if not is_restricted:
+        try:
+
+            await event.reply(file=msg.media, silent=True)
+            await status_msg.delete()
+            return
+        except ChatForwardsRestrictedError:
+            pass
+        except Exception:
+            pass
     try:
+        file_size = getattr(msg.file, "size", 0)
+        if file_size > MAX_ALLOWED_SIZE:
+            size_mb = file_size / (1024 * 1024)
+            await status_msg.delete()
+            await event.reply(
+                f"❌ File is too large ({size_mb:.1f} MB). Max allowed size is {MAX_ALLOWED_SIZE/(1024 * 1024)} MB."
+            )
+            return
         attributes = getattr(getattr(msg, "document", None), "attributes", None)
         thumb = None
         if getattr(getattr(msg, "document", None), "thumbs", None):
@@ -204,15 +280,24 @@ async def private_channel_handler(event: events.NewMessage.Event):
                 thumb = await msg.download_media(thumb=-1, file=bytes)
             except Exception:
                 thumb = None
+        tracker = progress_tracker(status_msg, action="Downloading")
         buffer = io.BytesIO()
-        await msg.download_media(file=buffer)
+        await msg.download_media(file=buffer, progress_callback=tracker)
         buffer.seek(0)
         buffer.name = filename
-        caption_parts = [f"Sender: {msg.sender_id}"]
-        if msg.text:
-            caption_parts.append(f"Caption:\n{msg.text}")
-        caption = "\n\n".join(caption_parts)
-        await event.reply(file=buffer, message=caption, attributes=attributes, thumb=thumb, silent=True)
+
+        caption = msg.text if msg.text else ""
+        tracker = progress_tracker(status_msg, action="Uploading")
+        await client.send_file(
+            entity=event.chat_id,
+            file=buffer,
+            caption=caption,
+            reply_to=event.id,
+            attributes=attributes,
+            thumb=thumb,
+            progress_callback=tracker,
+            silent=True,
+        )
         await status_msg.delete()
     except Exception as e:
         await status_msg.edit(f"Failed to process media: {e}")
